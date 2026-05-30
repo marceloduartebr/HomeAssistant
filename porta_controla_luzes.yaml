@@ -1,0 +1,61 @@
+blueprint:
+  name: Porta abre/fecha controla luzes
+  description: >
+    Quando um sensor de porta é aberto, acende uma ou mais luzes.
+    Quando a porta é fechada, aguarda alguns segundos e então apaga as luzes.
+  domain: automation
+  input:
+    sensor_porta:
+      name: Sensor de Porta
+      description: Sensor binário da porta (device_class door/opening).
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: door
+    luzes:
+      name: Luzes
+      description: Uma ou mais luzes a controlar.
+      selector:
+        target:
+          entity:
+            domain: light
+    atraso:
+      name: Atraso antes de desligar
+      description: Tempo de espera após fechar a porta, antes de apagar as luzes.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: segundos
+          mode: box
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input sensor_porta
+    to: "on"
+    id: aberta
+  - platform: state
+    entity_id: !input sensor_porta
+    to: "off"
+    id: fechada
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: aberta
+        sequence:
+          - service: light.turn_on
+            target: !input luzes
+      - conditions:
+          - condition: trigger
+            id: fechada
+        sequence:
+          - delay:
+              seconds: !input atraso
+          - service: light.turn_off
+            target: !input luzes
