@@ -1,0 +1,100 @@
+blueprint:
+  name: Luz por movimento com gatilho e desarme
+  description: >
+    Ao detectar movimento ou presença, verifica se o dispositivo de gatilho da
+    automação está ativado. Se estiver, liga a luz do ambiente. Em seguida, se o
+    dispositivo de desarme da automação estiver desativado, aguarda o sensor de
+    presença voltar ao estado de espera (sem movimento) e desliga a luz.
+  domain: automation
+  input:
+    sensor_presenca:
+      name: Sensor de movimento/presença
+      description: Sensor que dispara a automação ao detectar movimento ou presença.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - motion
+            - occupancy
+            - presence
+
+    gatilho_automacao:
+      name: Gatilho de ativação da automação
+      description: >
+        Interruptor (helper input_boolean ou switch). A automação só liga a luz
+        quando este dispositivo estiver ATIVADO (on).
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - switch
+
+    gatilho_desarme:
+      name: Gatilho de desarme da automação
+      description: >
+        Interruptor (helper input_boolean ou switch). A luz só será desligada
+        automaticamente quando este dispositivo estiver DESATIVADO (off).
+        Se estiver ativado, a luz permanece acesa.
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - switch
+
+    luz_ambiente:
+      name: Luz do ambiente
+      description: Luz (ou grupo de luzes) que será controlada.
+      selector:
+        target:
+          entity:
+            domain: light
+
+    tempo_espera:
+      name: Atraso antes de desligar
+      description: >
+        Tempo a aguardar, após o sensor voltar ao estado de espera, antes de
+        desligar a luz.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 1
+          unit_of_measurement: segundos
+          mode: slider
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input sensor_presenca
+    to: "on"
+
+condition:
+  # Só prossegue se o gatilho de ativação estiver ligado
+  - condition: state
+    entity_id: !input gatilho_automacao
+    state: "on"
+
+action:
+  # Liga a luz do ambiente
+  - service: light.turn_on
+    target: !input luz_ambiente
+
+  # Verifica se o gatilho de desarme está desativado
+  - if:
+      - condition: state
+        entity_id: !input gatilho_desarme
+        state: "off"
+    then:
+      # Aguarda o sensor de presença voltar ao estado de espera (sem movimento)
+      - wait_for_trigger:
+          - platform: state
+            entity_id: !input sensor_presenca
+            to: "off"
+      # Atraso opcional antes de desligar
+      - delay: !input tempo_espera
+      # Desliga a luz no ambiente
+      - service: light.turn_off
+        target: !input luz_ambiente
