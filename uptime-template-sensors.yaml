@@ -1,0 +1,36 @@
+# Template sensors para exibir o uptime das VMs Hyper-V em formato HH:MM:SS,
+# mantendo o sensor original (sensor.<vm>_uptime, em segundos) intacto para
+# graficos/estatisticas de longo prazo no HA.
+#
+# Como usar:
+# 1. Cole este bloco dentro do seu configuration.yaml (ou, se preferir manter
+#    separado, salve como uptime-template-sensors.yaml e adicione ao
+#    configuration.yaml a linha:
+#      template: !include uptime-template-sensors.yaml
+#    Se voce ja tem outros "template:" no configuration.yaml, funda os blocos
+#    "sensor:" em vez de ter duas chaves "template:" separadas.)
+# 2. Ajuste os entity_id de origem (sensor.SEU_VM_uptime) para os nomes reais
+#    das suas VMs.
+# 3. Reinicie o HA ou use Developer Tools > YAML > Reload Template Entities.
+
+template:
+  - sensor:
+      # ---- Home Assistant (a propria VM do HA) ----
+      - name: "Home Assistant Uptime Formatado"
+        unique_id: hyperv_home_assistant_uptime_formatted
+        icon: mdi:clock-outline
+        state: >
+          {% set total = states('sensor.home_assistant_uptime') | int(0) %}
+          {{ '%02d:%02d:%02d' | format(total // 3600, (total % 3600) // 60, total % 60) }}
+        availability: >
+          {{ states('sensor.home_assistant_uptime') not in ['unknown', 'unavailable', 'none'] }}
+
+      # ---- Exemplo para outra VM (duplique e ajuste o entity_id de origem) ----
+      # - name: "NomeDaVM Uptime Formatado"
+      #   unique_id: hyperv_nomedavm_uptime_formatted
+      #   icon: mdi:clock-outline
+      #   state: >
+      #     {% set total = states('sensor.nomedavm_uptime') | int(0) %}
+      #     {{ '%02d:%02d:%02d' | format(total // 3600, (total % 3600) // 60, total % 60) }}
+      #   availability: >
+      #     {{ states('sensor.nomedavm_uptime') not in ['unknown', 'unavailable', 'none'] }}
