@@ -1,0 +1,99 @@
+blueprint:
+  name: Carregador de bicicleta elétrica temporizado
+  description: >-
+    Ao ligar a tomada do carregador, inicia um timer. Quando o timer termina,
+    desliga a tomada. Se a tomada for desligada antes disso, a contagem é
+    cancelada. A contagem sobrevive a reinícios do Home Assistant. Requer um
+    auxiliar Temporizador exclusivo, com a opção de restaurar ao reiniciar
+    ativada.
+  domain: automation
+  input:
+    tomada:
+      name: Tomada do carregador
+      selector:
+        entity:
+          domain: switch
+    temporizador:
+      name: Temporizador
+      description: >-
+        Auxiliar Temporizador exclusivo desta automação, com a opção de
+        restaurar ao reiniciar ativada.
+      selector:
+        entity:
+          domain: timer
+    duracao:
+      name: Tempo de carga
+      description: Horas, minutos e segundos até o desligamento.
+      default:
+        hours: 4
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+
+mode: queued
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input tomada
+    from: "off"
+    to: "on"
+    id: ligada
+  - platform: state
+    entity_id: !input tomada
+    from: "on"
+    to: "off"
+    id: desligada
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input temporizador
+    id: tempo_esgotado
+  - platform: homeassistant
+    event: start
+    id: reinicio
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: ligada
+        sequence:
+          - service: timer.start
+            target:
+              entity_id: !input temporizador
+            data:
+              duration: !input duracao
+      - conditions:
+          - condition: trigger
+            id: desligada
+        sequence:
+          - service: timer.cancel
+            target:
+              entity_id: !input temporizador
+      - conditions:
+          - condition: trigger
+            id: tempo_esgotado
+        sequence:
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input tomada
+      # Rede de segurança: o tempo acabou com o Home Assistant desligado e o
+      # evento timer.finished não chegou à automação. A espera dá tempo para
+      # as integrações carregarem as entidades.
+      - conditions:
+          - condition: trigger
+            id: reinicio
+        sequence:
+          - delay:
+              seconds: 30
+          - condition: state
+            entity_id: !input tomada
+            state: "on"
+          - condition: state
+            entity_id: !input temporizador
+            state: idle
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input tomada
