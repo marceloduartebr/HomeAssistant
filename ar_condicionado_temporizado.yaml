@@ -1,0 +1,143 @@
+blueprint:
+  name: Ar-condicionado temporizado por interruptor
+  description: >-
+    Ao ligar o interruptor, liga o ar-condicionado e inicia um timer. Quando o
+    timer termina, desliga o ar-condicionado e o interruptor. Se o interruptor
+    for desligado antes disso, o ar-condicionado também é desligado. A contagem
+    sobrevive a reinícios do Home Assistant. Requer um auxiliar Temporizador
+    exclusivo, com a opção de restaurar ao reiniciar ativada.
+  domain: automation
+  input:
+    interruptor:
+      name: Interruptor
+      selector:
+        entity:
+          domain:
+            - switch
+            - input_boolean
+            - light
+    ar_condicionado:
+      name: Ar-condicionado
+      selector:
+        entity:
+          domain: climate
+    temporizador:
+      name: Temporizador
+      description: >-
+        Auxiliar Temporizador exclusivo desta automação, com a opção de
+        restaurar ao reiniciar ativada.
+      selector:
+        entity:
+          domain: timer
+    modo:
+      name: Modo do ar-condicionado
+      default: cool
+      selector:
+        select:
+          options:
+            - label: Refrigerar
+              value: cool
+            - label: Aquecer
+              value: heat
+            - label: Desumidificar
+              value: dry
+            - label: Ventilar
+              value: fan_only
+            - label: Automático
+              value: auto
+    duracao:
+      name: Tempo ligado
+      description: Horas, minutos e segundos até o desligamento.
+      default:
+        hours: 2
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+
+mode: queued
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input interruptor
+    from: "off"
+    to: "on"
+    id: ligado
+  - platform: state
+    entity_id: !input interruptor
+    from: "on"
+    to: "off"
+    id: desligado
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input temporizador
+    id: tempo_esgotado
+  - platform: homeassistant
+    event: start
+    id: reinicio
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: ligado
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input ar_condicionado
+            data:
+              hvac_mode: !input modo
+          - service: timer.start
+            target:
+              entity_id: !input temporizador
+            data:
+              duration: !input duracao
+      - conditions:
+          - condition: trigger
+            id: desligado
+        sequence:
+          - service: timer.cancel
+            target:
+              entity_id: !input temporizador
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input ar_condicionado
+            data:
+              hvac_mode: "off"
+      - conditions:
+          - condition: trigger
+            id: tempo_esgotado
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input ar_condicionado
+            data:
+              hvac_mode: "off"
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input interruptor
+      # Rede de segurança: o tempo acabou com o Home Assistant desligado e o
+      # evento timer.finished não chegou à automação. A espera dá tempo para
+      # as integrações carregarem as entidades.
+      - conditions:
+          - condition: trigger
+            id: reinicio
+        sequence:
+          - delay:
+              seconds: 30
+          - condition: state
+            entity_id: !input interruptor
+            state: "on"
+          - condition: state
+            entity_id: !input temporizador
+            state: idle
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input ar_condicionado
+            data:
+              hvac_mode: "off"
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input interruptor
