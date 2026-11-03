@@ -1,11 +1,13 @@
 blueprint:
   name: Ar-condicionado temporizado por interruptor
   description: >-
-    Ao ligar o interruptor, liga o ar-condicionado e inicia um timer. Quando o
-    timer termina, desliga o ar-condicionado e o interruptor. Se o interruptor
-    for desligado antes disso, o ar-condicionado também é desligado. A contagem
-    sobrevive a reinícios do Home Assistant. Requer um auxiliar Temporizador
-    exclusivo, com a opção de restaurar ao reiniciar ativada.
+    Ao ligar o interruptor, inicia um timer e liga o ar-condicionado. Quando o
+    timer termina, desliga o interruptor e o ar-condicionado. Se o interruptor
+    for desligado antes disso, o ar-condicionado também é desligado. O comando
+    de desligar é repetido até 5 vezes, e uma notificação é criada se todas
+    falharem. A contagem sobrevive a reinícios do Home Assistant. Requer um
+    auxiliar Temporizador exclusivo, com a opção de restaurar ao reiniciar
+    ativada.
   domain: automation
   input:
     interruptor:
@@ -54,9 +56,22 @@ blueprint:
         seconds: 0
       selector:
         duration:
+    acao_falha:
+      name: Ação em caso de falha
+      description: >-
+        Opcional. Executada se o ar-condicionado não desligar depois de 5
+        tentativas, além da notificação no Home Assistant. Use, por exemplo,
+        para enviar um aviso ao celular.
+      default: []
+      selector:
+        action:
 
-mode: queued
-max_exceeded: silent
+mode: restart
+
+variables:
+  interruptor: !input interruptor
+  ar_condicionado: !input ar_condicionado
+  temporizador: !input temporizador
 
 trigger:
   - platform: state
@@ -79,65 +94,72 @@ trigger:
     id: reinicio
 
 action:
-  - choose:
-      - conditions:
-          - condition: trigger
-            id: ligado
-        sequence:
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input ar_condicionado
-            data:
-              hvac_mode: !input modo
-          - service: timer.start
-            target:
-              entity_id: !input temporizador
-            data:
-              duration: !input duracao
-      - conditions:
-          - condition: trigger
-            id: desligado
-        sequence:
-          - service: timer.cancel
-            target:
-              entity_id: !input temporizador
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input ar_condicionado
-            data:
-              hvac_mode: "off"
-      - conditions:
-          - condition: trigger
-            id: tempo_esgotado
-        sequence:
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input ar_condicionado
-            data:
-              hvac_mode: "off"
-          - service: homeassistant.turn_off
-            target:
-              entity_id: !input interruptor
-      # Rede de segurança: o tempo acabou com o Home Assistant desligado e o
-      # evento timer.finished não chegou à automação. A espera dá tempo para
-      # as integrações carregarem as entidades.
-      - conditions:
-          - condition: trigger
-            id: reinicio
-        sequence:
-          - delay:
-              seconds: 30
-          - condition: state
-            entity_id: !input interruptor
-            state: "on"
-          - condition: state
-            entity_id: !input temporizador
-            state: idle
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input ar_condicionado
-            data:
-              hvac_mode: "off"
-          - service: homeassistant.turn_off
-            target:
-              entity_id: !input interruptor
+  # O timer inicia primeiro para garantir o fim do ciclo mesmo que o comando
+  # de ligar o ar-condicionado falhe.
+  - if:
+      - condition: trigger
+        id: ligado
+    then:
+      - service: timer.start
+        target:
+          entity_id: !input temporizador
+        data:
+          duration: !input duracao
+      - service: climate.set_hvac_mode
+        target:
+          entity_id: !input ar_condicionado
+        data:
+          hvac_mode: !input modo
+      - stop: Ciclo iniciado
+
+  # Rede de segurança: o tempo acabou com o Home Assistant desligado e o
+  # evento timer.finished não chegou à automação. A espera dá tempo para as
+  # integrações carregarem as entidades.
+  - if:
+      - condition: trigger
+        id: reinicio
+    then:
+      - delay:
+          seconds: 30
+  - condition: template
+    value_template: >-
+      {{ trigger.id != 'reinicio'
+         or (is_state(interruptor, 'on') and is_state(temporizador, 'idle')) }}
+
+  # Daqui em diante, o ciclo está sendo encerrado.
+  - service: timer.cancel
+    target:
+      entity_id: !input temporizador
+  # O interruptor é desligado antes do ar-condicionado para que uma falha no
+  # ar-condicionado não o deixe ligado. Isso dispara "desligado", que reinicia
+  # a automação e segue para as tentativas abaixo.
+  - service: homeassistant.turn_off
+    continue_on_error: true
+    target:
+      entity_id: !input interruptor
+  - repeat:
+      sequence:
+        - service: climate.set_hvac_mode
+          continue_on_error: true
+          target:
+            entity_id: !input ar_condicionado
+          data:
+            hvac_mode: "off"
+        - wait_template: "{{ is_state(ar_condicionado, 'off') }}"
+          timeout: "00:01:00"
+          continue_on_timeout: true
+      until:
+        - condition: template
+          value_template: "{{ is_state(ar_condicionado, 'off') or repeat.index >= 5 }}"
+  - if:
+      - condition: template
+        value_template: "{{ not is_state(ar_condicionado, 'off') }}"
+    then:
+      - service: persistent_notification.create
+        data:
+          title: Ar-condicionado não desligou
+          message: >-
+            {{ ar_condicionado }} continua em
+            {{ states(ar_condicionado) }} depois de 5 tentativas.
+      - choose: []
+        default: !input acao_falha
