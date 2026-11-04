@@ -45,13 +45,14 @@ blueprint:
         minutes: 5
       selector:
         duration:
-    servicos_notificacao:
-      name: Serviços de notificação
-      description: >-
-        Informe um serviço por linha, por exemplo notify.mobile_app_iphone_16_pro.
+    dispositivos_notificacao:
+      name: Dispositivos para notificar
+      description: Selecione um ou mais dispositivos com o app do Home Assistant.
       selector:
-        text:
+        device:
           multiple: true
+          filter:
+            - integration: mobile_app
 
 mode: parallel
 max: 20
@@ -69,7 +70,7 @@ triggers:
     for: !input duracao
 
 variables:
-  servicos: !input servicos_notificacao
+  dispositivos: !input dispositivos_notificacao
   minimo: !input limite_minimo
   maximo: !input limite_maximo
   umidade: "{{ state_attr(trigger.entity_id, 'device_class') == 'humidity' }}"
@@ -90,9 +91,10 @@ variables:
 
 actions:
   - repeat:
-      for_each: "{{ servicos }}"
+      for_each: "{{ dispositivos }}"
       sequence:
-        - action: "{{ repeat.item }}"
+        - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          continue_on_error: true
           data:
             title: "{{ titulo }}"
             message: "{{ mensagem }}"
