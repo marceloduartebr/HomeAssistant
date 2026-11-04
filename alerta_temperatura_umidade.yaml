@@ -1,0 +1,98 @@
+blueprint:
+  name: Alerta de temperatura e umidade
+  description: >-
+    Envia uma notificação quando um sensor de temperatura ou umidade fica acima
+    do limite máximo ou abaixo do limite mínimo pelo tempo configurado.
+    Crie uma automação para temperatura e outra para umidade, pois cada uma usa
+    um único par de limites.
+  domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    sensores:
+      name: Sensores
+      description: Selecione sensores do mesmo tipo (somente temperatura ou somente umidade).
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+              device_class:
+                - temperature
+                - humidity
+    limite_minimo:
+      name: Limite mínimo
+      description: Notifica quando o valor ficar abaixo deste limite.
+      selector:
+        number:
+          min: -40
+          max: 100
+          step: 0.5
+          mode: box
+    limite_maximo:
+      name: Limite máximo
+      description: Notifica quando o valor ficar acima deste limite.
+      selector:
+        number:
+          min: -40
+          max: 100
+          step: 0.5
+          mode: box
+    duracao:
+      name: Tempo fora do limite
+      description: Tempo que o valor deve permanecer fora do limite antes de notificar.
+      default:
+        minutes: 5
+      selector:
+        duration:
+    servicos_notificacao:
+      name: Serviços de notificação
+      description: >-
+        Informe um serviço por linha, por exemplo notify.mobile_app_iphone_16_pro.
+      selector:
+        text:
+          multiple: true
+
+mode: parallel
+max: 20
+
+triggers:
+  - trigger: numeric_state
+    id: acima
+    entity_id: !input sensores
+    above: !input limite_maximo
+    for: !input duracao
+  - trigger: numeric_state
+    id: abaixo
+    entity_id: !input sensores
+    below: !input limite_minimo
+    for: !input duracao
+
+variables:
+  servicos: !input servicos_notificacao
+  minimo: !input limite_minimo
+  maximo: !input limite_maximo
+  umidade: "{{ state_attr(trigger.entity_id, 'device_class') == 'humidity' }}"
+  unidade: "{{ state_attr(trigger.entity_id, 'unit_of_measurement') or '' }}"
+  area: "{{ area_name(trigger.entity_id) or 'Sem área' }}"
+  titulo: >-
+    {% set grandeza = '💧 Umidade' if umidade else '🌡️ Temperatura' %}
+    {% if trigger.id == 'acima' %}
+      {{ grandeza }} {{ 'alta' }}
+    {% else %}
+      {{ grandeza }} {{ 'baixa' }}
+    {% endif %}
+  mensagem: >-
+    {{ area }} – {{ trigger.to_state.name }}:
+    {{ trigger.to_state.state }}{{ unidade }}
+    ({{ 'máximo' if trigger.id == 'acima' else 'mínimo' }}
+    {{ maximo if trigger.id == 'acima' else minimo }}{{ unidade }})
+
+actions:
+  - repeat:
+      for_each: "{{ servicos }}"
+      sequence:
+        - action: "{{ repeat.item }}"
+          data:
+            title: "{{ titulo }}"
+            message: "{{ mensagem }}"
